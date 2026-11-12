@@ -88,7 +88,11 @@ if [ "$ROLE" = images ]; then
   AIBOX_COMFY_DIR=$C nohup $V/bin/python $HERE/drawserver.py >>$LOG 2>&1 &
 else
   M=/workspace/pup
-  SLOTS=${AIBOX_CAPTION_SLOTS:-8}
+  SLOTS=${AIBOX_CAPTION_SLOTS:-auto}
+  if [ "$SLOTS" = auto ]; then   # from the card's memory: ~9 GB for the model + buffers, ~0.3 GB per 16K slot (q8_0 KV); 8-32
+    VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+    SLOTS=$(( (VRAM / 1024 - 9) * 10 / 3 )); [ $SLOTS -lt 8 ] && SLOTS=8; [ $SLOTS -gt 32 ] && SLOTS=32
+  fi
   LS=$(command -v llama-server || ls /opt/llama.cpp/build/bin/llama-server /opt/llama.cpp/llama-server /app/llama-server \
        /usr/local/bin/llama-server 2>/dev/null | head -1)
   [ -n "$LS" ] || LS=$(find / -xdev -name llama-server -type f -perm -u+x 2>/dev/null | head -1)
