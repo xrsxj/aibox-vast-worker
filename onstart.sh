@@ -14,6 +14,9 @@ mkdir -p $W $DONE /var/log/aibox
 LOG=/var/log/aibox/server.log        # the PyWorker tails this (AIBOX_READY / AIBOX_FATAL)
 mv -f $LOG $LOG.old 2>/dev/null; touch $LOG   # (a restarted worker: old READY/FATAL lines must not count)
 exec >>/var/log/aibox/onstart.log 2>&1
+# some images (vastai/llama-cpp) leave /root/.ssh with modes sshd refuses (their entrypoint, which we don't run, fixes them)
+chown root:root /root /root/.ssh /root/.ssh/authorized_keys 2>/dev/null; chmod go-w /root; chmod 700 /root/.ssh 2>/dev/null
+chmod 600 /root/.ssh/authorized_keys 2>/dev/null
 echo "=== $(date -u +%FT%TZ) onstart role=$ROLE"
 fatal() { echo "AIBOX_FATAL $*" | tee -a $LOG; exit 1; }
 info() { echo "AIBOX_INFO $*" | tee -a $LOG; }
