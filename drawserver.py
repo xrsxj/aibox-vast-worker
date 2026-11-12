@@ -20,6 +20,11 @@ ROOT = os.environ.get('AIBOX_COMFY_DIR', '/workspace/ComfyUI')
 INPUT, OUTPUT = os.path.join(ROOT, 'input'), os.path.join(ROOT, 'output')
 PORT = int(os.environ.get('AIBOX_DRAW_PORT', '18300'))
 TIMEOUT_S = 900
+HERE = os.path.dirname(os.path.abspath(__file__))
+# bench_workflow.json at this seed, drawn on the AI box's own RTX 5070 Ti (driver 595.99, torch 2.15 cu134): sha256 of the
+# decoded RGB pixels. A worker that doesn't draw exactly this (other card model, other libraries) refuses to serve.
+IDENTITY_SEED = 1234567
+IDENTITY_SHA = os.environ.get('AIBOX_IDENTITY_SHA', '37bd930e52a825befa42bfc38f77ef9ac3a509e80b9ebbffa3a5c4de0ec0607b')
 http: ClientSession = None
 
 
@@ -32,6 +37,25 @@ def _safe(base, *parts):
     if not path.startswith(os.path.realpath(base) + os.sep):
         raise ValueError(f'path outside {base}: {parts}')
     return path
+
+
+def pixel_hash(png):
+    import hashlib
+    import io
+    import numpy as np
+    from PIL import Image
+    return hashlib.sha256(np.asarray(Image.open(io.BytesIO(png)).convert('RGB')).tobytes()).hexdigest()
+
+
+async def draw_json(body):
+    """(the identity check) draw() without an HTTP request: -> an awaitable of the answer dict"""
+    class R:
+        async def json(self):
+            return body
+    resp = await draw(R())
+    async def get():
+        return json.loads(resp.body)
+    return get()
 
 
 async def draw(req):
@@ -101,19 +125,35 @@ async def startup(app):
     global http
     http = ClientSession(timeout=ClientTimeout(total=TIMEOUT_S + 60))
     os.makedirs(INPUT, exist_ok=True)
-
-    async def wait_ready():
-        for _ in range(1800):  # ComfyUI starts after the model download
-            try:
-                async with http.get(f'{COMFY}/system_stats', timeout=ClientTimeout(total=5)) as r:
-                    if r.status == 200:
-                        log('AIBOX_READY ComfyUI answers')
-                        return
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-        log('AIBOX_FATAL ComfyUI never answered')
     asyncio.get_running_loop().create_task(wait_ready())
+
+
+async def wait_ready():
+    """AIBOX_READY once ComfyUI answers and draws the identity image pixel-identical to the AI box's; else AIBOX_FATAL."""
+    for _ in range(1800):  # ComfyUI starts after the model download
+        try:
+            async with http.get(f'{COMFY}/system_stats', timeout=ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    break
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    else:
+        log('AIBOX_FATAL ComfyUI never answered')
+        return
+    try:
+        wf = json.load(open(os.path.join(HERE, 'bench_workflow.json')))
+        wf['6']['inputs']['seed'] = IDENTITY_SEED
+        out = await (await draw_json({'id': 'identity', 'workflow': wf, 'refs': {}}))
+        im = next(i for o in out['outputs'].values() for i in o['images'])
+        got = await asyncio.to_thread(pixel_hash, base64.b64decode(im['b64']))
+    except Exception as e:
+        log(f'AIBOX_FATAL identity check failed to run: {e.__class__.__name__}: {str(e)[:200]}')
+        return
+    if got != IDENTITY_SHA:
+        log(f'AIBOX_FATAL output differs from the AI box (pixels {got[:16]}, expected {IDENTITY_SHA[:16]})')
+        return
+    log('AIBOX_READY ComfyUI answers; identity check passed (pixel-identical to the AI box)')
 
 
 app = web.Application(client_max_size=256 * 1024 * 1024)
