@@ -12,7 +12,8 @@ W=/workspace/aibox
 DONE=$W/done
 mkdir -p $W $DONE /var/log/aibox
 LOG=/var/log/aibox/server.log        # the PyWorker tails this (AIBOX_READY / AIBOX_FATAL)
-mv -f $LOG $LOG.old 2>/dev/null; touch $LOG   # (a restarted worker: old READY/FATAL lines must not count)
+# a restarted worker: old READY/FATAL lines must not count (but a running PyWorker keeps tailing this very file)
+pgrep -f "python3 -m worker" >/dev/null || { mv -f $LOG $LOG.old 2>/dev/null; touch $LOG; }
 exec >>/var/log/aibox/onstart.log 2>&1
 # some images (vastai/llama-cpp) leave /root/.ssh with modes sshd refuses (their entrypoint, which we don't run, fixes them)
 chown root:root /root /root/.ssh /root/.ssh/authorized_keys 2>/dev/null; chmod go-w /root; chmod 700 /root/.ssh 2>/dev/null
@@ -69,7 +70,7 @@ if [ "$ROLE" = images ]; then
     FILES="diffusion_models/qwen_image_2.1_nvfp4.safetensors text_encoders/qwen3vl_8b_nvfp4.safetensors vae/qwen_image_2.1_vae_bf16.safetensors"
     # plain curl, the three files side by side (hf's xet client was slower on a test host); hf only if that fails
     HF=https://huggingface.co/BennyDaBall/Qwen-Image-2.1-NVFP4/resolve/main
-    for f in $FILES; do mkdir -p $M/$(dirname $f); get $HF/$f $M/$f & done; wait
+    pids=(); for f in $FILES; do mkdir -p $M/$(dirname $f); get $HF/$f $M/$f & pids+=($!); done; wait "${pids[@]}"   # (not the PyWorker)
     for f in $FILES; do [ -s $M/$f ] || { info "curl failed for $f; trying hf"; timeout 1800 $V/bin/hf download BennyDaBall/Qwen-Image-2.1-NVFP4 $f --local-dir $M; }; done
     for f in $FILES; do [ -s $M/$f ] || fatal "model download failed: $f"; done
     for f in taeqi2_1_decoder.safetensors taeqi2_1_encoder.safetensors; do
@@ -95,7 +96,7 @@ else
     mkdir -p $M
     FILES="flux-3-image-klein-pup-UD-Q4_K_XL.gguf mmproj-F16.gguf"
     HF=https://huggingface.co/unsloth/flux-3-image-klein-pup-GGUF/resolve/main
-    for f in $FILES; do get $HF/$f $M/$f & done; wait
+    pids=(); for f in $FILES; do get $HF/$f $M/$f & pids+=($!); done; wait "${pids[@]}"
     for f in $FILES; do [ -s $M/$f ] || fatal "PUP download failed: $f"; done
     mark pup
   fi
