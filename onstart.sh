@@ -64,12 +64,10 @@ if [ "$ROLE" = images ]; then
   if ! step models; then
     mkdir -p $M
     FILES="diffusion_models/qwen_image_2.1_nvfp4.safetensors text_encoders/qwen3vl_8b_nvfp4.safetensors vae/qwen_image_2.1_vae_bf16.safetensors"
-    # hf's xet client (many connections; one curl stream ran ~7 MB/s), else plain curl, the three files side by side
-    if ! HF_XET_HIGH_PERFORMANCE=1 timeout 1800 $V/bin/hf download BennyDaBall/Qwen-Image-2.1-NVFP4 $FILES --local-dir $M; then
-      info "hf download failed; plain curl"
-      HF=https://huggingface.co/BennyDaBall/Qwen-Image-2.1-NVFP4/resolve/main
-      for f in $FILES; do mkdir -p $M/$(dirname $f); get $HF/$f $M/$f & done; wait
-    fi
+    # plain curl, the three files side by side (hf's xet client was slower on a test host); hf only if that fails
+    HF=https://huggingface.co/BennyDaBall/Qwen-Image-2.1-NVFP4/resolve/main
+    for f in $FILES; do mkdir -p $M/$(dirname $f); get $HF/$f $M/$f & done; wait
+    for f in $FILES; do [ -s $M/$f ] || { info "curl failed for $f; trying hf"; timeout 1800 $V/bin/hf download BennyDaBall/Qwen-Image-2.1-NVFP4 $f --local-dir $M; }; done
     for f in $FILES; do [ -s $M/$f ] || fatal "model download failed: $f"; done
     for f in taeqi2_1_decoder.safetensors taeqi2_1_encoder.safetensors; do
       get $ASSETS/$f $C/models/vae_approx/$f || fatal "$f download failed"
@@ -93,12 +91,8 @@ else
   if ! step pup; then
     mkdir -p $M
     FILES="flux-3-image-klein-pup-UD-Q4_K_XL.gguf mmproj-F16.gguf"
-    if ! (uv venv -q --python 3.12 /workspace/hfenv && uv pip install -q --python /workspace/hfenv/bin/python huggingface_hub hf_xet \
-          && HF_XET_HIGH_PERFORMANCE=1 timeout 1800 /workspace/hfenv/bin/hf download unsloth/flux-3-image-klein-pup-GGUF $FILES --local-dir $M); then
-      info "hf download failed; plain curl"
-      HF=https://huggingface.co/unsloth/flux-3-image-klein-pup-GGUF/resolve/main
-      for f in $FILES; do get $HF/$f $M/$f & done; wait
-    fi
+    HF=https://huggingface.co/unsloth/flux-3-image-klein-pup-GGUF/resolve/main
+    for f in $FILES; do get $HF/$f $M/$f & done; wait
     for f in $FILES; do [ -s $M/$f ] || fatal "PUP download failed: $f"; done
     mark pup
   fi
