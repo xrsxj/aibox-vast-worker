@@ -20,7 +20,8 @@ info() { echo "AIBOX_INFO $*" | tee -a $LOG; }
 step() { [ -f "$DONE/$1" ]; }
 mark() { touch "$DONE/$1"; }
 
-export HF_HUB_ENABLE_HF_TRANSFER=0 HF_XET_HIGH_PERFORMANCE=1
+# plain resumable downloads (a host's network refused hf's own client: "tlsv1 alert no application protocol")
+get() { for i in 1 2 3 4 5; do curl -fL --retry 3 --retry-delay 5 -C - -o "$2.part" "$1" && mv "$2.part" "$2" && return 0; sleep 5; done; return 1; }
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh || fatal "uv install failed"
 fi
@@ -53,11 +54,14 @@ if [ "$ROLE" = images ]; then
   fi
   if ! step models; then
     mkdir -p $M
-    $V/bin/hf download BennyDaBall/Qwen-Image-2.1-NVFP4 diffusion_models/qwen_image_2.1_nvfp4.safetensors \
-      text_encoders/qwen3vl_8b_nvfp4.safetensors vae/qwen_image_2.1_vae_bf16.safetensors --local-dir $M \
-      || fatal "model download failed"
+    HF=https://huggingface.co/BennyDaBall/Qwen-Image-2.1-NVFP4/resolve/main
+    for f in diffusion_models/qwen_image_2.1_nvfp4.safetensors text_encoders/qwen3vl_8b_nvfp4.safetensors \
+             vae/qwen_image_2.1_vae_bf16.safetensors; do
+      mkdir -p $M/$(dirname $f)
+      get $HF/$f $M/$f || fatal "model download failed: $f"
+    done
     for f in taeqi2_1_decoder.safetensors taeqi2_1_encoder.safetensors; do
-      curl -fsSL -o $C/models/vae_approx/$f $ASSETS/$f || fatal "$f download failed"
+      get $ASSETS/$f $C/models/vae_approx/$f || fatal "$f download failed"
     done
     ln -sf $M/diffusion_models/qwen_image_2.1_nvfp4.safetensors $C/models/diffusion_models/
     ln -sf $M/text_encoders/qwen3vl_8b_nvfp4.safetensors $C/models/text_encoders/
@@ -77,10 +81,11 @@ else
   [ -n "$LS" ] || LS=$(find / -xdev -name llama-server -type f -perm -u+x 2>/dev/null | head -1)
   [ -n "$LS" ] || fatal "no llama-server in this image"
   if ! step pup; then
-    uv venv --python 3.12 /workspace/hfenv >/dev/null && uv pip install --python /workspace/hfenv/bin/python huggingface_hub hf_xet \
-      || fatal "hf install failed"
-    /workspace/hfenv/bin/hf download unsloth/flux-3-image-klein-pup-GGUF flux-3-image-klein-pup-UD-Q4_K_XL.gguf mmproj-F16.gguf \
-      --local-dir $M || fatal "PUP download failed"
+    mkdir -p $M
+    HF=https://huggingface.co/unsloth/flux-3-image-klein-pup-GGUF/resolve/main
+    for f in flux-3-image-klein-pup-UD-Q4_K_XL.gguf mmproj-F16.gguf; do
+      get $HF/$f $M/$f || fatal "PUP download failed: $f"
+    done
     mark pup
   fi
   info "setup done; starting llama-server ($LS, $SLOTS slots)"
