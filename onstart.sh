@@ -21,16 +21,25 @@ step() { [ -f "$DONE/$1" ]; }
 mark() { touch "$DONE/$1"; }
 
 # plain resumable downloads (a host's network refused hf's own client: "tlsv1 alert no application protocol")
-get() { for i in 1 2 3 4 5; do curl -fL --retry 3 --retry-delay 5 -C - -o "$2.part" "$1" && mv "$2.part" "$2" && return 0; sleep 5; done; return 1; }
+# Hugging Face first, then its public mirror (some hosts' DNS sends huggingface.co elsewhere)
+get() {
+  local urls=("$1"); [[ $1 == https://huggingface.co/* ]] && urls+=("https://hf-mirror.com/${1#https://huggingface.co/}")
+  for i in 1 2 3; do for u in "${urls[@]}"; do
+    curl -fL --retry 2 --retry-delay 5 --connect-timeout 20 -C - -o "$2.part" "$u" && mv "$2.part" "$2" && return 0
+  done; sleep 5; done; return 1
+}
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh || fatal "uv install failed"
 fi
 export PATH=$HOME/.local/bin:$PATH
 
-start_pyworker() {
+start_pyworker() {   # in the background from the start: it tails $LOG, so a failed setup (AIBOX_FATAL) reaches Vast
   export PYWORKER_REPO=$REPO BACKEND=aibox MODEL_LOG=$LOG
-  curl -fsSL https://raw.githubusercontent.com/vast-ai/pyworker/main/start_server.sh | bash
+  if ! pgrep -f "python3 -m worker" >/dev/null; then
+    (curl -fsSL https://raw.githubusercontent.com/vast-ai/pyworker/main/start_server.sh | bash) &
+  fi
 }
+start_pyworker
 
 if [ "$ROLE" = images ]; then
   V=/workspace/venv; C=/workspace/ComfyUI; M=/workspace/models
@@ -72,7 +81,6 @@ if [ "$ROLE" = images ]; then
   (cd $C && nohup $V/bin/python main.py --listen 127.0.0.1 --port 18188 --disable-auto-launch \
       --use-pytorch-cross-attention --fast fp8_matrix_mult >>/var/log/aibox/comfyui.log 2>&1 &)
   AIBOX_COMFY_DIR=$C nohup $V/bin/python $HERE/drawserver.py >>$LOG 2>&1 &
-  start_pyworker
 else
   M=/workspace/pup
   SLOTS=${AIBOX_CAPTION_SLOTS:-8}
@@ -96,5 +104,5 @@ else
       curl -fs -m 5 http://127.0.0.1:18400/health >/dev/null && { echo "AIBOX_READY llama-server answers" >>$LOG; exit 0; }
       sleep 1
     done; echo "AIBOX_FATAL llama-server never answered" >>$LOG ) &
-  start_pyworker
 fi
+wait
