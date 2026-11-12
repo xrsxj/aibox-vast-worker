@@ -27,6 +27,7 @@ mark() { touch "$DONE/$1"; }
 # plain resumable downloads (a host's network refused hf's own client: "tlsv1 alert no application protocol")
 # Hugging Face first, then its public mirror (some hosts' DNS sends huggingface.co elsewhere)
 get() {
+  [ -s "$2" ] && return 0   # (already here: a rerun)
   local urls=("$1"); [[ $1 == https://huggingface.co/* ]] && urls+=("https://hf-mirror.com/${1#https://huggingface.co/}")
   for i in 1 2 3; do for u in "${urls[@]}"; do
     curl -fL --retry 2 --retry-delay 5 --connect-timeout 20 -C - -o "$2.part" "$u" && mv "$2.part" "$2" && return 0
