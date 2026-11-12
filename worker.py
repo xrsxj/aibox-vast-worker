@@ -18,6 +18,12 @@ COST = 100.0  # one image or one caption; the box's client sends the same cost
 
 if ROLE == 'images':
     BENCH = json.load(open(os.path.join(HERE, 'bench_workflow.json')))
+    try:   # one ComfyUI per GPU (onstart.sh): the benchmark keeps every GPU busy so Vast measures the whole machine
+        import subprocess
+        GPUS = max(1, sum(1 for line in subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True).stdout.splitlines()
+                          if line.startswith('GPU')))
+    except Exception:
+        GPUS = 1
 
     def bench():
         wf = copy.deepcopy(BENCH)
@@ -27,7 +33,7 @@ if ROLE == 'images':
     PORT, handler = 18300, HandlerConfig(
         route='/draw', allow_parallel_requests=True, max_queue_time=90.0,
         workload_calculator=lambda payload: COST,
-        benchmark_config=BenchmarkConfig(generator=bench, runs=1, concurrency=2, do_warmup=True))
+        benchmark_config=BenchmarkConfig(generator=bench, runs=1, concurrency=2 * GPUS, do_warmup=True))
 else:
     def bench():
         return {'model': 'flux3-pup', 'max_tokens': 200, 'temperature': 0.2,

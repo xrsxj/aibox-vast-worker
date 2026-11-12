@@ -82,10 +82,16 @@ if [ "$ROLE" = images ]; then
     ln -sf $M/vae/qwen_image_2.1_vae_bf16.safetensors $C/models/vae/
     mark models
   fi
-  info "setup done; starting ComfyUI"
-  (cd $C && nohup $V/bin/python main.py --listen 127.0.0.1 --port 18188 --disable-auto-launch \
-      --use-pytorch-cross-attention --fast fp8_matrix_mult >>/var/log/aibox/comfyui.log 2>&1 &)
-  AIBOX_COMFY_DIR=$C nohup $V/bin/python $HERE/drawserver.py >>$LOG 2>&1 &
+  # one ComfyUI per GPU (a multi-GPU machine is one worker): port 18188+i, CUDA_VISIBLE_DEVICES=i, its own output and
+  # temp folders (the same counter-numbered file names), the input folder shared (references)
+  NG=$(nvidia-smi -L | grep -c '^GPU')
+  info "setup done; starting ComfyUI on $NG GPU(s)"
+  for i in $(seq 0 $((NG - 1))); do
+    if [ "$NG" -gt 1 ]; then DIRS="--output-directory $C/output/gpu$i --temp-directory $C/temp/gpu$i"; mkdir -p $C/output/gpu$i $C/temp/gpu$i; else DIRS=""; fi
+    (cd $C && CUDA_VISIBLE_DEVICES=$i nohup $V/bin/python main.py --listen 127.0.0.1 --port $((18188 + i)) --disable-auto-launch \
+        --use-pytorch-cross-attention --fast fp8_matrix_mult $DIRS >>/var/log/aibox/comfyui$i.log 2>&1 &)
+  done
+  AIBOX_GPUS=$NG AIBOX_COMFY_DIR=$C nohup $V/bin/python $HERE/drawserver.py >>$LOG 2>&1 &
 else
   M=/workspace/pup
   SLOTS=${AIBOX_CAPTION_SLOTS:-auto}
