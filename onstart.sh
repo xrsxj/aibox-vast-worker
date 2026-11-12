@@ -12,7 +12,7 @@ W=/workspace/aibox
 DONE=$W/done
 mkdir -p $W $DONE /var/log/aibox
 LOG=/var/log/aibox/server.log        # the PyWorker tails this (AIBOX_READY / AIBOX_FATAL)
-touch $LOG
+mv -f $LOG $LOG.old 2>/dev/null; touch $LOG   # (a restarted worker: old READY/FATAL lines must not count)
 exec >>/var/log/aibox/onstart.log 2>&1
 echo "=== $(date -u +%FT%TZ) onstart role=$ROLE"
 fatal() { echo "AIBOX_FATAL $*" | tee -a $LOG; exit 1; }
